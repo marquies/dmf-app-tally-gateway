@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tally Gateway</title>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --pgm: #d32f2f; --pvw: #2e7d32; --warn: #ef6c00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161616; --fg: #e8e8e8; --muted: #999; --line: #333; --pgm: #ef5350; --pvw: #66bb6a; --warn: #ffa726; }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  .status { color: var(--muted); }
+  .bad { color: var(--warn); font-weight: 600; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .tally { display: inline-block; min-width: 64px; padding: 1px 6px; border-radius: 3px; text-align: center; border: 1px solid var(--line); }
+  .program { background: var(--pgm); border-color: var(--pgm); color: #fff; }
+  .preview { background: var(--pvw); border-color: var(--pvw); color: #fff; }
+  .invalid { color: var(--warn); border-color: var(--warn); }
+  .off { color: var(--muted); }
+  select, button { font: inherit; }
+</style>
+</head>
+<body>
+<h1>Tally Gateway</h1>
+<div id="upstream" class="status">loading</div>
+
+<h2>Devices</h2>
+<div class="wrap"><table>
+  <thead><tr><th>Device</th><th>Connection</th><th>Last seen</th><th>Firmware</th><th>Source</th><th>Tally</th><th></th></tr></thead>
+  <tbody id="devices"></tbody>
+</table></div>
+
+<h2>Sources</h2>
+<div class="wrap"><table>
+  <thead><tr><th>Source</th><th>Label</th><th>Tally</th></tr></thead>
+  <tbody id="sources"></tbody>
+</table></div>
+
+<script>
+"use strict";
+// The page is opened as /?token=... when the gateway requires a token; every
+// API call carries it on.
+const token = new URLSearchParams(location.search).get("token");
+const headers = token ? { Authorization: "Bearer " + token } : {};
+let sources = [];
+let editing = false;
+
+async function api(method, path, body) {
+  const opts = { method, headers: { ...headers } };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(method + " " + path + ": " + res.status);
+  return res.status === 204 ? null : res.json();
+}
+
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  Object.assign(e, attrs || {});
+  for (const c of children) e.append(c);
+  return e;
+}
+
+function tallyCell(t) {
+  let cls = "off", text = t.state;
+  if (!t.valid) { cls = "invalid"; text = "invalid"; }
+  else if (t.program) cls = "program";
+  else if (t.preview) cls = "preview";
+  return el("td", {}, el("span", { className: "tally " + cls, textContent: text }));
+}
+
+function sourceSelect(d) {
+  const sel = el("select");
+  const keys = sources.map(s => s.sourceId);
+  if (!keys.includes(d.sourceId)) keys.unshift(d.sourceId);
+  for (const k of keys) {
+    const s = sources.find(s => s.sourceId === k);
+    sel.append(el("option", { value: k, textContent: s && s.label ? k + " (" + s.label + ")" : k, selected: k === d.sourceId }));
+  }
+  sel.onfocus = () => { editing = true; };
+  sel.onblur = () => { editing = false; };
+  sel.onchange = async () => {
+    editing = false;
+    try { await api("PUT", "/api/v1/devices/" + encodeURIComponent(d.deviceId), { sourceId: sel.value }); }
+    catch (e) { alert(e.message); }
+    refresh();
+  };
+  return sel;
+}
+
+function render(devices, src) {
+  const up = document.getElementById("upstream");
+  up.textContent = src.valid ? "SwitchFrame state fresh" : "SwitchFrame state stale: every tally is invalid";
+  up.className = src.valid ? "status" : "status bad";
+
+  const dt = document.getElementById("devices");
+  dt.replaceChildren(...devices.map(d => {
+    const del = el("button", { textContent: "Delete" });
+    del.onclick = async () => {
+      if (!confirm("Forget " + d.deviceId + "?")) return;
+      try { await api("DELETE", "/api/v1/devices/" + encodeURIComponent(d.deviceId)); }
+      catch (e) { alert(e.message); }
+      refresh();
+    };
+    return el("tr", {},
+      el("td", { textContent: d.deviceId }),
+      el("td", { textContent: d.connected ? "connected" : "offline", className: d.connected ? "" : "off" }),
+      el("td", { textContent: new Date(d.lastSeen).toLocaleString() }),
+      el("td", { textContent: d.firmware || "" }),
+      el("td", {}, sourceSelect(d)),
+      tallyCell(d.tally),
+      el("td", {}, del));
+  }));
+
+  const st = document.getElementById("sources");
+  st.replaceChildren(...src.sources.map(s =>
+    el("tr", {}, el("td", { textContent: s.sourceId }), el("td", { textContent: s.label }), tallyCell(s))));
+}
+
+async function refresh() {
+  if (editing) return;
+  try {
+    const [devices, src] = await Promise.all([api("GET", "/api/v1/devices"), api("GET", "/api/v1/sources")]);
+    sources = src.sources;
+    render(devices, src);
+  } catch (e) {
+    const up = document.getElementById("upstream");
+    up.textContent = "Gateway unreachable: " + e.message;
+    up.className = "status bad";
+  }
+}
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
