@@ -1,0 +1,21 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "tally-gateway.fullname" . }}
+  labels:
+    {{- include "tally-gateway.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "tally-gateway.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      {{- if .Values.tlsSecret }}
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+      {{- end }}
+{{- end }}

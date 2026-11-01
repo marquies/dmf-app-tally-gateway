@@ -1,0 +1,59 @@
+image:
+  repository: ghcr.io/marquies/dmf-app-tally-gateway
+  # Empty resolves to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+switchframe:
+  # Base URL of the SwitchFrame server, required.
+  url: ""
+  # Bearer token for the SwitchFrame API. Ignored when existingSecret is set.
+  token: ""
+
+# Token devices and API clients must present. Empty disables auth.
+# Ignored when existingSecret is set.
+authToken: ""
+
+# Secret holding SWITCHFRAME_TOKEN and/or AUTH_TOKEN, in place of the two
+# values above.
+existingSecret: ""
+
+# Further environment variables, such as POLL_INTERVAL or CLIENT_TIMEOUT.
+env: {}
+
+# Secret with tls.crt and tls.key to serve HTTPS and WSS from the pod itself.
+tlsSecret: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+persistence:
+  size: 64Mi
+  storageClass: ""
+  # Use an existing claim instead of creating one.
+  existingClaim: ""
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

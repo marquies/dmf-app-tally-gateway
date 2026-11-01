@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tally-gateway.fullname" . }}
+  labels:
+    {{- include "tally-gateway.labels" . | nindent 4 }}
+spec:
+  # One instance only: device connections, the sequence counter and the
+  # registry file are process-local. Recreate keeps a rollout from running
+  # two pods against one ReadWriteOnce volume.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "tally-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tally-gateway.selectorLabels" . | nindent 8 }}
+      {{- if not .Values.existingSecret }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tally-gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: SWITCHFRAME_URL
+              value: {{ required "switchframe.url is required" .Values.switchframe.url | quote }}
+            - name: DATA_DIR
+              value: /data
+            - name: LISTEN_ADDR
+              value: ":8080"
+            {{- if or .Values.existingSecret .Values.switchframe.token }}
+            - name: SWITCHFRAME_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tally-gateway.secretName" . }}
+                  key: SWITCHFRAME_TOKEN
+                  optional: true
+            {{- end }}
+            {{- if or .Values.existingSecret .Values.authToken }}
+            - name: AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tally-gateway.secretName" . }}
+                  key: AUTH_TOKEN
+                  optional: true
+            {{- end }}
+            {{- if .Values.tlsSecret }}
+            - name: TLS_CERT_FILE
+              value: /tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /tls/tls.key
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ include "tally-gateway.scheme" . }}
+          # Not ready while SwitchFrame state is stale. Devices connected
+          # through the Service keep their connections and show fail-safe.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              scheme: {{ include "tally-gateway.scheme" . }}
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.tlsSecret }}
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "tally-gateway.fullname" .) }}
+        {{- if .Values.tlsSecret }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tlsSecret }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
