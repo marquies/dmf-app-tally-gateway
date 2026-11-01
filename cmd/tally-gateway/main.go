@@ -67,9 +67,9 @@ func run(log *slog.Logger) error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Shutdown does not wait for hijacked WebSocket connections; devices see
-	// the socket close and fall back to fail-safe.
-	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = srv.Shutdown(shutdown)
+	g.Shutdown()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

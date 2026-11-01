@@ -40,6 +40,10 @@ type Hub struct {
 	mu      sync.Mutex
 	seq     uint64
 	clients map[string]*client
+	// conns holds every open connection, registered or not, so Shutdown
+	// can close them: http.Server.Shutdown does not track WebSockets.
+	conns map[*client]struct{}
+	wg    sync.WaitGroup
 }
 
 type client struct {
@@ -75,6 +79,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	c := &client{conn: conn, send: make(chan []byte, sendBuffer)}
 	c.touch()
+	h.mu.Lock()
+	h.conns[c] = struct{}{}
+	h.wg.Add(1)
+	h.mu.Unlock()
+	defer h.wg.Done()
 	deadline := time.AfterFunc(h.registerTimeout, func() {
 		if !c.registered.Load() {
 			c.closeWith(websocket.StatusPolicyViolation, "no register received")
@@ -254,10 +263,12 @@ func (h *Hub) sendError(c *client, code, msg string) {
 }
 
 func (h *Hub) detach(c *client) {
+	h.mu.Lock()
+	delete(h.conns, c)
 	if !c.registered.Load() {
+		h.mu.Unlock()
 		return
 	}
-	h.mu.Lock()
 	id := c.deviceID
 	if h.clients[id] == c {
 		delete(h.clients, id)
@@ -300,6 +311,17 @@ func (h *Hub) Disconnect(deviceID string) {
 		h.metrics.connected.Set(float64(len(h.clients)))
 		c.closeWith(websocket.StatusNormalClosure, "device deleted")
 	}
+}
+
+// Shutdown closes every connection and waits until each has recorded its
+// device's last-seen time.
+func (h *Hub) Shutdown() {
+	h.mu.Lock()
+	for c := range h.conns {
+		c.closeWith(websocket.StatusGoingAway, "gateway shutting down")
+	}
+	h.mu.Unlock()
+	h.wg.Wait()
 }
 
 // Connected reports whether a device is connected and when it was last heard.

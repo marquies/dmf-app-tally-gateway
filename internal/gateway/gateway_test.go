@@ -97,6 +97,8 @@ func startGateway(t *testing.T, sf *fakeSwitchFrame, cfg config.Config) *testEnv
 		cancel()
 		srv.CloseClientConnections()
 		srv.Close()
+		// Handlers outlive srv.Close and write the registry in TempDir.
+		g.Shutdown()
 	})
 	e := &testEnv{sf: sf, g: g, srv: srv, cfg: cfg}
 	e.waitReady(t)
@@ -639,5 +641,21 @@ func TestChangeToDeviceLatency(t *testing.T) {
 	t.Logf("change-to-device latency: p50 %v, p95 %v, max %v", samples[len(samples)/2], p95, samples[len(samples)-1])
 	if p95 > 100*time.Millisecond {
 		t.Fatalf("p95 %v exceeds 100ms", p95)
+	}
+}
+
+func TestShutdownClosesDevicesAndRecordsLastSeen(t *testing.T) {
+	e := newEnv(t, nil)
+	d := e.connect(t, "tally-1", "cam1")
+	d.expect("registered")
+	d.expect("tally")
+	before, _ := e.g.registry.Get("tally-1")
+
+	time.Sleep(10 * time.Millisecond)
+	e.g.Shutdown()
+	d.expectClosed()
+	after, _ := e.g.registry.Get("tally-1")
+	if !after.LastSeen.After(before.LastSeen) {
+		t.Fatalf("last seen not recorded on shutdown: %v -> %v", before.LastSeen, after.LastSeen)
 	}
 }

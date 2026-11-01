@@ -62,6 +62,7 @@ func New(cfg config.Config, reg *registry.Registry, log *slog.Logger) *Gateway {
 			metrics:         m,
 			log:             log,
 			clients:         map[string]*client{},
+			conns:           map[*client]struct{}{},
 		},
 	}
 }
@@ -81,6 +82,10 @@ func (g *Gateway) Run(ctx context.Context, src upstream.Source) {
 	go g.watchStaleness(ctx)
 	src.Run(ctx, g.apply)
 }
+
+// Shutdown closes every device connection and waits for them to finish, so
+// devices go fail-safe at once and the registry records their last contact.
+func (g *Gateway) Shutdown() { g.hub.Shutdown() }
 
 func (g *Gateway) apply(snap upstream.Snapshot) {
 	g.upMu.Lock()
