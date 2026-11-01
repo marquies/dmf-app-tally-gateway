@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      # switchframe.url has no default; the chart refuses to render without it.
+      - run: helm lint charts/tally-gateway --set switchframe.url=http://switchframe:8080
+      - run: >-
+          helm template ci charts/tally-gateway
+          --set switchframe.url=http://switchframe:8080
+          --set authToken=x,ingress.enabled=true,ingress.host=tally.invalid
+          --set serviceMonitor.enabled=true,tlsSecret=tls
