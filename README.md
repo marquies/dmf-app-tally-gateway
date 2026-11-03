@@ -31,7 +31,8 @@ Environment variables only. Durations use Go syntax (`50ms`, `3s`).
 | `HEARTBEAT_INTERVAL` | `10s` | Interval of `heartbeat` messages and WebSocket pings |
 | `CLIENT_TIMEOUT` | `30s` | A device that sends nothing, not even a pong, for this long is disconnected |
 | `DATA_DIR` | `/data` | Directory of the device registry, `devices.json` |
-| `AUTH_TOKEN` | empty | When set, required on `/ws/v1`, `/api/v1` and the monitoring page |
+| `AUTH_TOKEN` | empty | When set, required on `/ws/v1`, and on `/api/v1` and the monitoring page unless OIDC signs a person in |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URL` | empty | Sign people in on the monitoring page and `/api/v1` through this issuer, as this public client; the redirect URL is the page's public origin plus `/auth/callback`. Set all three or none |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | empty | Serve HTTPS and WSS; set both or neither |
 
@@ -39,12 +40,20 @@ Environment variables only. Durations use Go syntax (`50ms`, `3s`).
 query parameter. The monitoring page is opened as `/?token=<token>` and passes
 the token on to the API.
 
+With OIDC, opening the page without a token sends the browser to the issuer:
+the authorization code flow with PKCE, no client secret. A completed sign-in
+starts a session of 12 hours in the cookie `tally_session`, held in memory, so
+a restart signs people in again through the issuer's own session. An API call
+without a session or the token is refused with 401; `/ws/v1` takes the token
+only.
+
 ## HTTP endpoints
 
 | Path | Purpose |
 | --- | --- |
 | `GET /` | Monitoring page: devices, sources, assignment |
 | `GET /ws/v1` | Device WebSocket |
+| `GET /auth/callback` | Completes an OIDC sign-in; served with OIDC only |
 | `GET /api/v1/devices` | Devices with assigned source, firmware, connection state, last seen and current tally |
 | `PUT /api/v1/devices/{id}` | Assign a source, body `{"sourceId":"cam2"}`; 404 for an unknown device |
 | `DELETE /api/v1/devices/{id}` | Forget a device and close its connection |

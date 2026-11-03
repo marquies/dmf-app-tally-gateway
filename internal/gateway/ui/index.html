@@ -45,7 +45,9 @@
 <script>
 "use strict";
 // The page is opened as /?token=... when the gateway requires a token; every
-// API call carries it on.
+// API call carries it on. Signed in through OIDC instead, the session cookie
+// goes with every call, and an expired session reloads the page to sign in
+// again.
 const token = new URLSearchParams(location.search).get("token");
 const headers = token ? { Authorization: "Bearer " + token } : {};
 let sources = [];
@@ -58,6 +60,7 @@ async function api(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(path, opts);
+  if (res.status === 401 && !token) location.reload();
   if (!res.ok) throw new Error(method + " " + path + ": " + res.status);
   return res.status === 204 ? null : res.json();
 }
