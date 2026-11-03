@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,40 @@ func TestInvalid(t *testing.T) {
 	for _, want := range []string{"SWITCHFRAME_URL", "POLL_INTERVAL", "TLS_KEY_FILE"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+}
+
+func TestOIDC(t *testing.T) {
+	base := map[string]string{
+		"SWITCHFRAME_URL":   "http://sf:8080",
+		"OIDC_ISSUER":       "https://kc.example/realms/dmf",
+		"OIDC_CLIENT_ID":    "switchframe.ns.sf",
+		"OIDC_REDIRECT_URL": "https://tally.example/auth/callback",
+	}
+	c, err := Load(env(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.OIDCIssuer != base["OIDC_ISSUER"] || c.OIDCClientID != base["OIDC_CLIENT_ID"] || c.OIDCRedirectURL != base["OIDC_REDIRECT_URL"] {
+		t.Fatalf("OIDC not read: %+v", c)
+	}
+
+	// A partial setting would leave the page open or unreachable without
+	// saying why, so it fails at start.
+	for _, missing := range []string{"OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_REDIRECT_URL"} {
+		m := maps.Clone(base)
+		delete(m, missing)
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "must be set together") {
+			t.Errorf("without %s: err = %v", missing, err)
+		}
+	}
+	// The callback is served at one path; another would never be answered.
+	for _, bad := range []string{"/auth/callback", "https://tally.example/callback"} {
+		m := maps.Clone(base)
+		m["OIDC_REDIRECT_URL"] = bad
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "OIDC_REDIRECT_URL") {
+			t.Errorf("redirect %q: err = %v", bad, err)
 		}
 	}
 }

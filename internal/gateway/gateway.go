@@ -34,6 +34,8 @@ type Gateway struct {
 	hub      *Hub
 	metrics  *metrics
 	log      *slog.Logger
+	// login is nil without OIDC settings.
+	login *login
 
 	// upMu orders snapshot application against the staleness check, so a
 	// snapshot that has just arrived is never invalidated as stale.
@@ -46,7 +48,12 @@ func New(cfg config.Config, reg *registry.Registry, log *slog.Logger) *Gateway {
 	_, _ = rand.Read(b)
 	m := newMetrics()
 	store := tally.NewStore()
+	var l *login
+	if cfg.OIDCIssuer != "" {
+		l = newLogin(cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCRedirectURL)
+	}
 	return &Gateway{
+		login:    l,
 		cfg:      cfg,
 		store:    store,
 		registry: reg,
@@ -137,36 +144,66 @@ func (g *Gateway) Handler() http.Handler {
 	mux.Handle("GET /metrics", promhttp.HandlerFor(g.metrics.reg, promhttp.HandlerOpts{}))
 
 	mux.Handle("GET /ws/v1", g.auth(g.hub))
-	mux.Handle("GET /{$}", g.auth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /{$}", g.person(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexHTML)
-	})))
-	mux.Handle("GET /api/v1/devices", g.auth(http.HandlerFunc(g.listDevices)))
-	mux.Handle("PUT /api/v1/devices/{id}", g.auth(http.HandlerFunc(g.assignDevice)))
-	mux.Handle("DELETE /api/v1/devices/{id}", g.auth(http.HandlerFunc(g.deleteDevice)))
-	mux.Handle("GET /api/v1/sources", g.auth(http.HandlerFunc(g.listSources)))
+	}), true))
+	mux.Handle("GET /api/v1/devices", g.person(http.HandlerFunc(g.listDevices), false))
+	mux.Handle("PUT /api/v1/devices/{id}", g.person(http.HandlerFunc(g.assignDevice), false))
+	mux.Handle("DELETE /api/v1/devices/{id}", g.person(http.HandlerFunc(g.deleteDevice), false))
+	mux.Handle("GET /api/v1/sources", g.person(http.HandlerFunc(g.listSources), false))
+	if g.login != nil {
+		mux.HandleFunc("GET /auth/callback", g.login.callback)
+	}
 	return mux
 }
 
-// auth accepts the token as a bearer token or, for clients that cannot set
-// headers, as the token query parameter.
+// auth admits a caller holding the token.
 func (g *Gateway) auth(next http.Handler) http.Handler {
 	if g.cfg.AuthToken == "" {
 		return next
 	}
-	want := []byte(g.cfg.AuthToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := r.URL.Query().Get("token")
-		if h, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-			got = h
-		}
-		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if !g.hasToken(r) {
+			unauthorized(w)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// person admits to the page and the API a person signed in through OIDC, or
+// a caller holding the token. A browser opening the page unsigned is sent to
+// sign in; an API call is refused.
+func (g *Gateway) person(next http.Handler, page bool) http.Handler {
+	if g.login == nil {
+		return g.auth(next)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case g.login.signedIn(r), g.cfg.AuthToken != "" && g.hasToken(r):
+			next.ServeHTTP(w, r)
+		case page:
+			g.login.begin(w, r)
+		default:
+			unauthorized(w)
+		}
+	})
+}
+
+// hasToken accepts the token as a bearer token or, for clients that cannot
+// set headers, as the token query parameter.
+func (g *Gateway) hasToken(r *http.Request) bool {
+	got := r.URL.Query().Get("token")
+	if h, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		got = h
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(g.cfg.AuthToken)) == 1
+}
+
+func unauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
 type deviceView struct {
