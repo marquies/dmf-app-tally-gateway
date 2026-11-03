@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/marquies/dmf-app-tally-gateway/compare/v0.1.0...v0.2.0) (2026-11-03)
+
+
+### Features
+
+* **gateway:** sign people in on the page and API through OIDC ([#2](https://github.com/marquies/dmf-app-tally-gateway/issues/2)) ([fce4302](https://github.com/marquies/dmf-app-tally-gateway/commit/fce430230c35619bb0d322dd6f163224b3be93fd))
+
 ## 0.1.0 (2026-11-01)
 
 
